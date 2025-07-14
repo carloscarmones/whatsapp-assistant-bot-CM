@@ -1,0 +1,71 @@
+main.py
+
+from flask import Flask, request
+import requests
+import openai
+import os
+
+app = Flask(__name__)
+
+# Configure sua chave da OpenAI
+openai.api_key = os.environ['VARIAVEL.KAY.CM']
+
+# Configure seu token e ID de telefone do WhatsApp Business
+whatsapp_token = os.environ['WHATSAPP_TOKEN']
+phone_number_id = os.environ['ID_NUMERO_TLEFONE']
+
+# ID do seu agente da OpenAI (criado na plataforma)
+assistant_id = os.environ['ID_ASSISTENTE']
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+
+    try:
+        # Pega a mensagem recebida no WhatsApp
+        msg_body = data['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
+        sender = data['entry'][0]['changes'][0]['value']['messages'][0]['from']
+
+        # Envia para o agente da OpenAI
+        response = openai.beta.threads.create_and_run(
+            assistant_id=assistant_id,
+            thread={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": msg_body
+                    }
+                ]
+            }
+        )
+
+        # Pega a resposta gerada
+        message_id = response['last_run']['required_action']['submit_tool_outputs']['tool_call_id']
+        reply_text = "Em construção..."  # depois podemos adaptar para pegar a resposta real do agente
+
+        # Envia a resposta de volta para o WhatsApp
+        requests.post(
+            f"https://graph.facebook.com/v19.0/{phone_number_id}/messages",
+            headers={
+                "Authorization": f"Bearer {whatsapp_token}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "messaging_product": "whatsapp",
+                "to": sender,
+                "text": {"body": reply_text}
+            }
+        )
+
+    except Exception as e:
+        print("Erro:", e)
+
+    return "OK", 200
+
+app.run(host='0.0.0.0', port=3000)
+
+
+response = requests.post(url, headers=headers, json=mensagem)
+
+print("Status:", response.status_code)
+print("Resposta:", response.json())

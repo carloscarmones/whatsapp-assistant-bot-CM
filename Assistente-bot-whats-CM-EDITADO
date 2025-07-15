@@ -1,0 +1,95 @@
+from flask import Flask, request
+import requests
+import os
+
+app = Flask(__name__)
+
+# Carregando variáveis de ambiente
+token_whatsapp = os.environ.get("WHATSAPP_TOKEN")
+numero_id = os.environ.get("ID_NUMERO_TLEFONE")
+id_assistente = os.environ.get("ID_ASSISTENTE")
+openai_key = os.environ.get("CHAVE-OPNAI-CA")
+variavel_kay = os.environ.get("VARIAVEL.KAY.CM")
+
+# Endpoint do webhook
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+
+    # Verifica se há mensagens
+    if data and data.get("entry"):
+        for entry in data["entry"]:
+            for change in entry["changes"]:
+                value = change["value"]
+                messages = value.get("messages")
+                if messages:
+                    phone_number_id = value["metadata"]["phone_number_id"]
+                    from_number = messages[0]["from"]
+                    message_body = messages[0]["text"]["body"]
+
+                    # Criação da resposta com a OpenAI (via Assistente)
+                    resposta = gerar_resposta_com_assistente(message_body)
+
+                    # Envia a resposta de volta pelo WhatsApp
+                    enviar_mensagem_whatsapp(from_number, resposta)
+
+    return "OK", 200
+
+# Função para enviar mensagem pelo WhatsApp
+def enviar_mensagem_whatsapp(numero, texto):
+    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token_whatsapp}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero,
+        "text": {"body": texto}
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    print("Resposta da API do WhatsApp:", response.text)
+
+# Função para gerar resposta com OpenAI Assistants API
+def gerar_resposta_com_assistente(pergunta):
+    url = "https://api.openai.com/v1/threads"
+    headers = {
+        "Authorization": f"Bearer {openai_key}",
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "assistants=v2"
+    }
+
+    # Criação do thread
+    thread_response = requests.post(url, headers=headers)
+    thread_id = thread_response.json().get("id")
+
+    # Envia a pergunta para o assistente
+    msg_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
+    requests.post(msg_url, headers=headers, json={
+        "role": "user",
+        "content": pergunta
+    })
+
+    # Executa o assistente
+    run_url = f"https://api.openai.com/v1/threads/{thread_id}/runs"
+    run = requests.post(run_url, headers=headers, json={
+        "assistant_id": id_assistente
+    }).json()
+
+    # Aguarda a execução (pode ser ajustado com polling real em produção)
+    import time
+    time.sleep(4)
+
+    # Pega a resposta final
+    result_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
+    resposta = requests.get(result_url, headers=headers).json()
+    mensagens = resposta.get("data", [])
+
+    if mensagens:
+        return mensagens[-1]["content"][0]["text"]["value"]
+    else:
+        return "Desculpe, não consegui gerar uma resposta."
+
+if __name__ == '__main__':
+    app.run(port=5000)

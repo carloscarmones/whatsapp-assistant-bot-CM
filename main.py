@@ -2,14 +2,22 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])
-def verify():
-    verify_token = "seu_token_aqui"  # <<< SUBSTITUIR pelo token que você definir na Meta
-    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.verify_token") == verify_token:
-        return request.args.get("hub.challenge")
-    return "Erro de verificação", 403
+VERIFY_TOKEN = "seu_token_de_verificacao"
 
-@app.route('/', methods=['POST'])
+@app.route('/')
+def home():
+    return 'Olá, Carlos! Seu bot está online com Flask!'
+
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    print(request.json)  # Teste: só mostra o corpo da mensagem recebida no log do Render
-    return "Recebido", 200
+    if request.method == 'GET':
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        if token == VERIFY_TOKEN:
+            return challenge
+        return 'Erro de verificação'
+    return 'Webhook recebido com sucesso'
+
+if __name__ == '__main__':
+    app.run()
+

@@ -2,7 +2,7 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-VERIFY_TOKEN = "seu_token_de_verificacao"
+VERIFY_TOKEN = "carloscarmonesia"
 
 @app.route('/')
 def home():

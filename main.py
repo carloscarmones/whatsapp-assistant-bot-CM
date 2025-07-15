@@ -5,4 +5,5 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello():
-    return "Olá, Carlos! Seu bot está online com Flask!"
+    return return "Bot atualizado — online com Flask!"
+

@@ -1,95 +1,111 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import requests
 import os
+import time
 
 app = Flask(__name__)
 
-# Carregando variáveis de ambiente
-token_whatsapp = os.environ.get("WHATSAPP_TOKEN")
-numero_id = os.environ.get("ID_NUMERO_TLEFONE")
-id_assistente = os.environ.get("ID_ASSISTENTE")
-openai_key = os.environ.get("CHAVE-OPNAI-CA")
-variavel_kay = os.environ.get("VARIAVEL.KAY.CM")
+# Variáveis de ambiente (Render)
+openai_key = os.environ.get("CHAVE-OPENAI-CA")
+assistant_id = os.environ.get("ID_ASSISTENTE")
+whatsapp_token = os.environ.get("WHATSAPP_TOKEN")
+numero_telefone_id = os.environ.get("ID_NUMERO_TLFONE")
 
-# Endpoint do webhook
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json()
-
-    # Verifica se há mensagens
-    if data and data.get("entry"):
-        for entry in data["entry"]:
-            for change in entry["changes"]:
-                value = change["value"]
-                messages = value.get("messages")
-                if messages:
-                    phone_number_id = value["metadata"]["phone_number_id"]
-                    from_number = messages[0]["from"]
-                    message_body = messages[0]["text"]["body"]
-
-                    # Criação da resposta com a OpenAI (via Assistente)
-                    resposta = gerar_resposta_com_assistente(message_body)
-
-                    # Envia a resposta de volta pelo WhatsApp
-                    enviar_mensagem_whatsapp(from_number, resposta)
-
-    return "OK", 200
-
-# Função para enviar mensagem pelo WhatsApp
-def enviar_mensagem_whatsapp(numero, texto):
-    url = f"https://graph.facebook.com/v19.0/{numero_id}/messages"
+# Enviar mensagem para o WhatsApp
+def enviar_mensagem(mensagem, numero):
+    url = f"https://graph.facebook.com/v18.0/{numero_telefone_id}/messages"
     headers = {
-        "Authorization": f"Bearer {token_whatsapp}",
+        "Authorization": f"Bearer {whatsapp_token}",
         "Content-Type": "application/json"
     }
     payload = {
         "messaging_product": "whatsapp",
         "to": numero,
-        "text": {"body": texto}
+        "type": "text",
+        "text": {"body": mensagem}
     }
 
     response = requests.post(url, headers=headers, json=payload)
-    print("Resposta da API do WhatsApp:", response.text)
+    print("Enviando resposta:", response.status_code, response.text)
 
-# Função para gerar resposta com OpenAI Assistants API
-def gerar_resposta_com_assistente(pergunta):
-    url = "https://api.openai.com/v1/threads"
+# Enviar pergunta para o assistente OpenAI
+def gerar_resposta(pergunta):
     headers = {
         "Authorization": f"Bearer {openai_key}",
         "Content-Type": "application/json",
         "OpenAI-Beta": "assistants=v2"
     }
 
-    # Criação do thread
-    thread_response = requests.post(url, headers=headers)
-    thread_id = thread_response.json().get("id")
+    # Criar um thread
+    thread_res = requests.post("https://api.openai.com/v1/threads", headers=headers)
+    thread_id = thread_res.json()["id"]
 
-    # Envia a pergunta para o assistente
-    msg_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-    requests.post(msg_url, headers=headers, json={
-        "role": "user",
-        "content": pergunta
-    })
+    # Enviar mensagem para o thread
+    requests.post(
+        f"https://api.openai.com/v1/threads/{thread_id}/messages",
+        headers=headers,
+        json={"role": "user", "content": pergunta}
+    )
 
-    # Executa o assistente
-    run_url = f"https://api.openai.com/v1/threads/{thread_id}/runs"
-    run = requests.post(run_url, headers=headers, json={
-        "assistant_id": id_assistente
-    }).json()
+    # Iniciar execução com o assistente
+    run_res = requests.post(
+        f"https://api.openai.com/v1/threads/{thread_id}/runs",
+        headers=headers,
+        json={"assistant_id": assistant_id}
+    )
+    run_id = run_res.json()["id"]
 
-    # Aguarda a execução (pode ser ajustado com polling real em produção)
-    import time
-    time.sleep(4)
+    # Aguardar conclusão da resposta
+    while True:
+        status_res = requests.get(
+            f"https://api.openai.com/v1/threads/{thread_id}/runs/{run_id}",
+            headers=headers
+        )
+        status = status_res.json()["status"]
+        if status == "completed":
+            break
+        elif status == "failed":
+            return "Erro ao gerar resposta com a IA."
+        time.sleep(1)
 
-    # Pega a resposta final
-    result_url = f"https://api.openai.com/v1/threads/{thread_id}/messages"
-    resposta = requests.get(result_url, headers=headers).json()
-    mensagens = resposta.get("data", [])
+    # Obter resposta
+    messages_res = requests.get(
+        f"https://api.openai.com/v1/threads/{thread_id}/messages",
+        headers=headers
+    )
+    messages = messages_res.json()["data"]
+    resposta = messages[0]["content"][0]["text"]["value"]
+    return resposta
 
-    if mensagens:
-        return mensagens[-1]["content"][0]["text"]["value"]
-    else:
-        return "Desculpe, não consegui gerar uma resposta."
+# Rota do webhook da Meta
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json()
 
-if __name__ == '__main__':
-    app.run(port=5000)
+    try:
+        mensagem = data["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
+        numero = data["entry"][0]["changes"][0]["value"]["messages"][0]["from"]
+
+        print("Mensagem recebida:", mensagem)
+        resposta = gerar_resposta(mensagem)
+        enviar_mensagem(resposta, numero)
+
+        return jsonify({"status": "mensagem processada com sucesso"}), 200
+
+    except Exception as e:
+        print("Erro ao processar:", str(e))
+        return jsonify({"status": "erro", "mensagem": str(e)}), 500
+
+# Rota de verificação do webhook (GET)
+@app.route("/webhook", methods=["GET"])
+def verificar():
+    verify_token = "carlos_carmones_token"  # Esse tem que ser o mesmo que você configurou na Meta
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    if token == verify_token:
+        return challenge
+    return "Token inválido", 403
+
+if __name__ == "__main__":
+    app.run(debug=True)
